@@ -1,0 +1,69 @@
+# 阶段3配置：继续生成100次
+# 说明：对每个token_2048，继续生成100次以获得完整rollout
+
+trainer:
+  nnodes: 1
+  n_gpus_per_node: 2  # 根据实际可用GPU数量调整
+  device: cuda
+
+data:
+  # 这个路径会被stage3_continuation.py脚本动态设置
+  path: outputs/stage2_input.parquet
+  prompt_key: continuation_prompt  # 拼接后的continuation prompt
+  n_samples: 100  # 每个token_2048继续生成100次
+  output_path: outputs/stage3_output.parquet
+  batch_size: 8  # 比阶段1小，因为输入更长
+  trust_remote_code: true
+
+model:
+  # 应与stage1使用相同的模型
+  path: /datacenter/models/Qwen/Qwen3-4B-Instruct-2507
+  external_lib: null
+
+rollout:
+  _target_: verl.workers.config.RolloutConfig
+  name: hf  # 使用HuggingFace后端进行同步生成
+  temperature: 1.0  # 保持与阶段1一致
+  top_k: -1
+  top_p: 0.95  # 保持与阶段1一致
+  prompt_length: 4096  # 更长，因为包含了token_2048
+  response_length: 28672  # 足够大，确保能生成完整答案
+  
+  # vLLM配置
+  dtype: bfloat16
+  gpu_memory_utilization: 0.85
+  ignore_eos: false  # 允许模型在认为完成时停止
+  enforce_eager: true
+  free_cache_engine: true
+  load_format: auto
+  tensor_model_parallel_size: 1
+  pipeline_model_parallel_size: 1  # 流水线并行大小
+  expert_parallel_size: 1  # 专家并行大小
+  data_parallel_size: 2
+  max_num_batched_tokens: 32768
+  max_model_len: 32768  # 确保能容纳长输入
+  max_num_seqs: 128  # 比阶段1小，因为序列更长
+  log_prob_micro_batch_size: null  # 不计算log probs时设为null
+  log_prob_micro_batch_size_per_gpu: 4  # 更小的micro batch
+  
+  do_sample: true
+  disable_log_stats: true
+  enable_chunked_prefill: true
+  n: 1
+  calculate_log_probs: false
+
+actor:
+  strategy: fsdp
+  ulysses_sequence_parallel_size: 1
+  entropy_from_logits_with_chunking: false
+  entropy_checkpointing: false
+  fsdp_config:
+    fsdp_size: -1
+    forward_prefetch: false
+
+ray_kwargs:
+  ray_init:
+    address: "10.176.42.41:53769"
+    num_cpus: null
+  timeline_json_file: null
+

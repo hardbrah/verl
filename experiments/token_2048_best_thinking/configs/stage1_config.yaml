@@ -1,0 +1,70 @@
+# 阶段1配置：生成8个token_2048
+# 说明：每个问题采样8次，每次生成2048个token
+
+trainer:
+  nnodes: 1
+  n_gpus_per_node: 2  # 根据实际可用GPU数量调整
+  device: cuda
+
+data:
+  # 这个路径会被stage1_sample.py脚本动态设置
+  path: outputs/stage1_sampled_questions.parquet
+  prompt_key: prompt  # 数据中包含对话格式的列名
+  n_samples: 8  # 每个问题采样8次
+  output_path: outputs/stage1_output.parquet  # 输出路径
+  batch_size: 16  # 根据显存大小调整，16是一个保守值
+  trust_remote_code: true  # Qwen模型需要
+
+model:
+  # 请修改为您的Qwen3-4B-Instruct-2507模型实际路径
+  path: /datacenter/models/Qwen/Qwen3-4B-Instruct-2507
+  external_lib: null
+
+rollout:
+  _target_: verl.workers.config.RolloutConfig
+  name: hf  # 使用HuggingFace后端进行同步生成
+  temperature: 1.0  # 采样温度，1.0表示标准采样
+  top_k: -1  # -1表示不限制top_k
+  top_p: 0.95  # nucleus sampling
+  prompt_length: 2048  # prompt最大长度
+  response_length: 2048  # 生成2048个token（这是关键参数！）
+  
+  # vLLM配置
+  dtype: bfloat16  # 使用bfloat16节省显存
+  gpu_memory_utilization: 0.85  # GPU显存利用率
+  ignore_eos: false  # 不忽略EOS token（如果模型提前结束就让它结束）
+  enforce_eager: true  # 使用eager模式，避免编译开销
+  free_cache_engine: true  # 生成后释放缓存
+  load_format: auto
+  tensor_model_parallel_size: 1  # 张量并行大小
+  pipeline_model_parallel_size: 1  # 流水线并行大小
+  expert_parallel_size: 1  # 专家并行大小
+  data_parallel_size: 2  # 数据并行大小（应等于n_gpus_per_node）
+  max_num_batched_tokens: 32768  # 每批最大token数
+  max_model_len: 32768  # 模型最大长度（Qwen3支持32k）
+  max_num_seqs: 256  # 最大并发序列数
+  log_prob_micro_batch_size: null  # 不计算log probs时设为null
+  log_prob_micro_batch_size_per_gpu: 8
+  
+  # HF rollout相关（使用vLLM时不生效）
+  do_sample: true
+  disable_log_stats: true
+  enable_chunked_prefill: true
+  n: 1
+  calculate_log_probs: false  # 不计算log probs，节省时间
+
+actor:
+  strategy: fsdp
+  ulysses_sequence_parallel_size: 1
+  entropy_from_logits_with_chunking: false
+  entropy_checkpointing: false
+  fsdp_config:
+    fsdp_size: -1
+    forward_prefetch: false
+
+ray_kwargs:
+  ray_init:
+    address: "10.176.42.41:53769"
+    num_cpus: null  # None表示使用所有CPU
+  timeline_json_file: null
+
