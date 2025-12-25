@@ -1,0 +1,75 @@
+# vLLM Rollout 配置文件
+# 说明：这是一个轻量化的 rollout 配置，使用 vLLM 引擎进行高效推理
+
+# 模型配置
+model:
+  # 模型路径（请根据实际情况修改）
+  path: /datacenter/models/Qwen/Qwen3-4B-Instruct-2507
+  trust_remote_code: true
+
+# 数据配置
+data:
+  # 输入数据路径（包含 prompt 列的 parquet 文件）
+  input: outputs/stage1_sampled_questions.parquet
+  # 输出数据路径
+  output: outputs/vllm_rollout_output.parquet
+  # prompt 列名
+  prompt_key: prompt
+
+# 采样配置
+sampling:
+  # 每个 prompt 生成多少个响应
+  n_samples: 8
+  # 最大生成 token 数
+  max_tokens: 2048
+  # 采样温度（1.0 表示标准采样，越低越确定性）
+  temperature: 1.0
+  # Top-p (nucleus) sampling
+  top_p: 0.95
+  # Top-k sampling（-1 表示不使用）
+  top_k: -1
+  # 重复惩罚（1.0 表示无惩罚）
+  repetition_penalty: 1.0
+  # 随机种子（确保可复现）
+  seed: 42
+
+# vLLM 引擎配置
+engine:
+  # 张量并行大小（根据 GPU 数量调整）
+  tensor_parallel_size: 1
+  # GPU 显存利用率（0-1，建议 0.85-0.95）
+  gpu_memory_utilization: 0.9
+  # 模型最大长度（null 表示使用模型配置）
+  max_model_len: null
+  # 数据类型
+  dtype: bfloat16
+  # 是否强制 eager 模式（调试时设为 true）
+  enforce_eager: false
+  # 是否启用前缀缓存（推荐开启）
+  enable_prefix_caching: true
+  # 最大并发序列数
+  max_num_seqs: 256
+
+# 性能调优建议：
+# 1. 单 GPU（如 A100 80GB）：
+#    - tensor_parallel_size: 1
+#    - gpu_memory_utilization: 0.95
+#    - max_num_seqs: 256
+#
+# 2. 多 GPU（如 2x A100）：
+#    - tensor_parallel_size: 2
+#    - gpu_memory_utilization: 0.95
+#    - max_num_seqs: 512
+#
+# 3. 内存不足时：
+#    - 降低 gpu_memory_utilization 到 0.8
+#    - 降低 max_num_seqs
+#    - 考虑使用 float16 而不是 bfloat16
+#
+# 4. 提高吞吐量：
+#    - 增大 max_num_seqs（如果显存允许）
+#    - 启用 enable_prefix_caching
+#    - 使用 bfloat16 而不是 float32
+
+
+

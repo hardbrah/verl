@@ -3,6 +3,8 @@
 # Token 2048 最佳思考实验 - 完整运行脚本
 
 set -e  # 遇到错误立即退出
+export CUDA_VISIBLE_DEVICES="6,7"
+# export VLLM_USE_V1=0  # 强制使用 vLLM v0，避免 v1 的 CUDA 多进程问题
 
 # 颜色定义
 RED='\033[0;31m'
@@ -10,6 +12,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
+python -c "import multiprocessing as mp; print(mp.get_start_method(allow_none=True))"
 
 # 打印带颜色的消息
 print_info() {
@@ -43,60 +46,6 @@ cd "$SCRIPT_DIR"
 print_section "Token 2048 最佳思考实验"
 print_info "工作目录: $SCRIPT_DIR"
 print_info "开始时间: $(date '+%Y-%m-%d %H:%M:%S')"
-
-# # 检查Python环境
-# print_info "检查Python环境..."
-# if ! command -v python &> /dev/null; then
-#     print_error "找不到python命令"
-#     exit 1
-# fi
-
-# PYTHON_VERSION=$(python --version 2>&1 | awk '{print $2}')
-# print_success "Python版本: $PYTHON_VERSION"
-
-# # 检查必要的Python包
-# print_info "检查必要的Python包..."
-# python -c "import pandas, numpy, datasets, hydra, ray" 2>/dev/null || {
-#     print_error "缺少必要的Python包"
-#     print_info "请运行: pip install pandas numpy datasets hydra-core ray"
-#     exit 1
-# }
-# print_success "必要的Python包已安装"
-
-# # 检查verl是否安装
-# print_info "检查verl是否安装..."
-# python -c "import verl" 2>/dev/null || {
-#     print_error "verl未安装"
-#     print_info "请运行: cd /mnt/nas/chenhaotian/verl && pip install -e ."
-#     exit 1
-# }
-# print_success "verl已安装"
-
-# # 创建outputs目录
-# print_info "创建输出目录..."
-# mkdir -p outputs
-# print_success "输出目录已创建: outputs/"
-
-# # 检查配置文件
-# print_info "检查配置文件..."
-# if [ ! -f "configs/stage1_config.yaml" ] || [ ! -f "configs/stage3_config.yaml" ]; then
-#     print_error "配置文件不存在"
-#     exit 1
-# fi
-# print_success "配置文件检查通过"
-
-# 注释掉配置确认（用户要求关闭check_config功能）
-# print_warning "请确保已正确配置以下内容："
-# print_info "  1. configs/stage1_config.yaml 中的 model.path（Qwen3-4B模型路径）"
-# print_info "  2. configs/stage1_config.yaml 中的 trainer.n_gpus_per_node（可用GPU数量）"
-# print_info "  3. configs/stage3_config.yaml 中的配置应与stage1保持一致"
-# echo ""
-# read -p "配置确认无误，继续执行？[y/N] " -n 1 -r
-# echo
-# if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-#     print_warning "用户取消执行"
-#     exit 0
-# fi
 
 # 记录开始时间
 START_TIME=$(date +%s)

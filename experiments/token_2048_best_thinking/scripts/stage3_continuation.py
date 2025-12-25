@@ -23,6 +23,17 @@
 """
 
 import os
+# 强制使用 vLLM v0，避免 v1 的 CUDA 多进程问题
+# 必须在导入任何其他模块之前设置
+# os.environ["VLLM_USE_V1"] = "0"  # 强制覆盖，不使用 setdefault
+
+import multiprocessing as mp
+try:
+    mp.set_start_method("spawn", force=True)
+except RuntimeError:
+    pass
+print("mp start method after set:", mp.get_start_method(allow_none=True))
+
 import sys
 from pathlib import Path
 
@@ -33,12 +44,9 @@ sys.path.insert(0, str(verl_root))
 import pandas as pd
 import numpy as np
 import json
-import hydra
-from omegaconf import OmegaConf
 from tqdm import tqdm
 
-# 导入verl模块
-from verl.trainer.main_generation import run_generation
+# 导入答案验证模块
 from verl.utils.reward_score.math_dapo import compute_score
 
 
@@ -53,12 +61,28 @@ def verify_continuation_prompts(input_path: str):
     
     df = pd.read_parquet(input_path)
     
-    # 检查必需的列
-    required_columns = ['question_id', 'sample_id', 'token_2048', 
-                       'ground_truth', 'continuation_prompt_raw']
-    missing_columns = [col for col in required_columns if col not in df.columns]
+    # 检查必需的列（兼容两种命名方式）
+    # 旧命名: question_id, sample_id, ground_truth
+    # 新命名: q_id, token_id, gt_answer
+    required_columns_new = ['q_id', 'token_id', 'token_2048', 
+                           'gt_answer', 'continuation_prompt_raw']
+    required_columns_old = ['question_id', 'sample_id', 'token_2048', 
+                           'ground_truth', 'continuation_prompt_raw']
     
-    if missing_columns:
+    # 检查是使用新命名还是旧命名
+    if all(col in df.columns for col in required_columns_new):
+        # 使用新命名，无需转换
+        pass
+    elif all(col in df.columns for col in required_columns_old):
+        # 使用旧命名，转换为新命名
+        df = df.rename(columns={
+            'question_id': 'q_id',
+            'sample_id': 'token_id',
+            'ground_truth': 'gt_answer'
+        })
+    else:
+        # 检查缺失的列
+        missing_columns = [col for col in required_columns_new if col not in df.columns]
         raise ValueError(f"缺少必需的列: {missing_columns}")
     
     print(f"✓ 数据格式正确")
@@ -79,10 +103,7 @@ def prepare_generation_input(
     temp_input_path: str = "outputs/stage3_temp_input.parquet"
 ):
     """
-    将阶段2的输出转换为verl generation可以直接使用的格式
-    
-    由于verl的tokenizer.apply_chat_template不支持raw string，
-    我们需要一个特殊处理：将continuation_prompt包装成chat格式
+    将阶段2的输出转换为生成可以直接使用的格式
     
     Args:
         stage2_input_path: 阶段2的输出
@@ -92,55 +113,77 @@ def prepare_generation_input(
     
     df = pd.read_parquet(stage2_input_path)
     
-    # 为了让verl能够使用，我们将continuation_prompt包装成chat格式
-    # 使用已有的'continuation_prompt'列（包含user和assistant消息）
-    
+    # 使用 continuation_prompt 列（包含完整的对话历史）
     df_for_gen = df[['continuation_prompt']].copy()
-    df_for_gen.columns = ['prompt']  # 重命名为'prompt'以匹配config中的prompt_key
+    df_for_gen.columns = ['question']  # 重命名为'question'
     
     # 保存
     os.makedirs(os.path.dirname(temp_input_path) or '.', exist_ok=True)
     df_for_gen.to_parquet(temp_input_path, index=False)
     
     print(f"✓ 准备完成，保存到: {temp_input_path}")
+    print(f"✓ 共 {len(df_for_gen)} 条数据")
     
     return temp_input_path
 
 
-def run_continuation_generation(config_path: str = "configs/stage3_config.yaml"):
+def run_continuation_generation(
+    input_path: str,
+    output_path: str,
+    model_path: str = "/datacenter/models/Qwen/Qwen3-4B-Instruct-2507",
+    n_samples: int = 100,
+    max_new_tokens: int = 28672,
+    temperature: float = 1.0,
+    top_p: float = 0.95
+):
     """
-    运行继续生成
+    运行继续生成，使用 transformers 直接推理
     
     Args:
-        config_path: 配置文件路径
+        input_path: 输入文件路径
+        output_path: 输出文件路径
+        model_path: 模型路径
+        n_samples: 每个prompt生成多少次
+        max_new_tokens: 最大生成token数
+        temperature: 采样温度
+        top_p: nucleus sampling参数
     """
     print(f"[生成] 开始继续生成...")
     
-    # 使用hydra加载配置
-    with hydra.initialize(config_path="../configs", version_base=None):
-        config = hydra.compose(config_name="stage3_config")
-        
-        # 确保路径正确
-        config.data.path = "outputs/stage3_temp_input.parquet"
-        config.data.output_path = "outputs/stage3_raw_output.parquet"
-        
-        print("\n配置信息：")
-        print(f"- 模型: {config.model.path}")
-        print(f"- 输入: {config.data.path}")
-        print(f"- 输出: {config.data.output_path}")
-        print(f"- 采样次数: {config.data.n_samples}")
-        print(f"- 生成长度: {config.rollout.response_length}")
-        print(f"- GPU数量: {config.trainer.n_gpus_per_node}")
-        print(f"- Batch size: {config.data.batch_size}")
-        
-        print("\n⏳ 开始生成（这将花费较长时间，约10小时）...")
-        print("提示：")
-        print("- 可以使用 Ctrl+C 中断")
-        print("- 生成过程中会定期输出进度")
-        print("- 如果遇到OOM错误，请减小batch_size")
-        print()
-        
-        run_generation(config)
+    print("\n生成配置：")
+    print(f"- 模型: {model_path}")
+    print(f"- 输入: {input_path}")
+    print(f"- 输出: {output_path}")
+    print(f"- 采样次数: {n_samples}")
+    print(f"- 生成长度: {max_new_tokens} tokens")
+    print(f"- 温度: {temperature}")
+    print(f"- Top-p: {top_p}")
+    
+    print("\n⏳ 开始生成（这将花费较长时间）...")
+    print("提示：")
+    print("- 可以使用 Ctrl+C 中断")
+    print("- 如果遇到OOM错误，请考虑减小 batch_size 或 max_new_tokens")
+    print()
+    
+    # 导入简单生成函数
+    from simple_generate import generate_responses_stage3
+    
+    # 设置随机种子
+    import torch
+    torch.manual_seed(42)
+    torch.cuda.manual_seed_all(42)
+    np.random.seed(42)
+    
+    # 调用生成函数
+    generate_responses_stage3(
+        model_path=model_path,
+        input_parquet=input_path,
+        output_parquet=output_path,
+        n_samples=n_samples,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        top_p=top_p,
+    )
     
     print("\n✓ 生成完成！")
 
@@ -342,7 +385,15 @@ def main():
     # 步骤3：运行生成
     print("\n步骤3/4：运行继续生成")
     print("-" * 80)
-    run_continuation_generation()
+    run_continuation_generation(
+        input_path=temp_input,
+        output_path="outputs/stage3_raw_output.parquet",
+        model_path="/datacenter/models/Qwen/Qwen3-4B-Instruct-2507",
+        n_samples=100,
+        max_new_tokens=28672,  # 足够大以生成完整答案
+        temperature=1.0,
+        top_p=0.95
+    )
     
     # 步骤4：处理输出
     print("\n步骤4/4：处理生成结果并计算正确性")

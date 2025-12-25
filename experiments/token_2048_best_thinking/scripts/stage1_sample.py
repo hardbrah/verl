@@ -116,6 +116,10 @@ def prepare_dapo_math_sample(
         # 获取prompt（已经是chat格式的list）
         prompt = item.get('prompt', [])
         
+        # 如果prompt是numpy.ndarray，转换为list
+        if hasattr(prompt, 'tolist'):
+            prompt = prompt.tolist()
+        
         # 从prompt中提取问题文本（用于记录）
         question_text = ""
         if isinstance(prompt, list) and len(prompt) > 0:
@@ -134,6 +138,10 @@ def prepare_dapo_math_sample(
             gt_answer = gt_answer.item() if gt_answer.size == 1 else str(gt_answer)
         elif not isinstance(gt_answer, str):
             gt_answer = str(gt_answer)
+
+        prompt = [
+            {"role": "system", "content": "You are a helpful math assistant. Follow the user's instructions exactly."},
+            {"role": "user", "content": question_text}]
         
         sampled_data.append({
             'q_id': q_id,
@@ -146,6 +154,14 @@ def prepare_dapo_math_sample(
     df = pd.DataFrame(sampled_data)
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
     df.to_parquet(output_path, index=False)
+
+    # 保存为jsonl文件
+    jsonl_path = output_path.replace('.parquet', '.jsonl')
+    with open(jsonl_path, 'w', encoding='utf-8') as f:
+        for item in sampled_data:
+            json.dump(item, f, ensure_ascii=False)
+            f.write('\n')
+    print(f"JSONL格式已保存: {jsonl_path}")
     
     print(f"采样完成，已保存到: {output_path}")
     print(f"数据格式预览：")
@@ -277,7 +293,7 @@ def main():
     print("-" * 80)
     sampled_questions_path = prepare_dapo_math_sample(
         dataset_name="BytedTsinghua-SIA/DAPO-Math-17k",
-        sample_size=20,
+        sample_size=1000,
         output_path="outputs/stage1_sampled_questions.parquet",
         seed=RANDOM_SEED
     )
@@ -285,7 +301,6 @@ def main():
     # 步骤2：调用简单生成脚本
     print("\n步骤2/3：调用简单生成脚本生成8个token_2048")
     print("-" * 80)
-    print("正在使用 transformers 直接生成...")
     
     # 导入简单生成函数
     from simple_generate import generate_responses
@@ -321,7 +336,7 @@ def main():
         max_new_tokens=2048,
         temperature=1.0,
         top_p=0.95,
-        batch_size=1  # 使用小的batch size以避免OOM
+        max_model_len=4096
     )
     
     print("\n生成完成！")
