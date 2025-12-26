@@ -51,7 +51,8 @@ def generate_responses(
         tensor_parallel_size=tensor_parallel_size,
         gpu_memory_utilization=gpu_memory_utilization,
         dtype="bfloat16", # 推荐在 Ampere+ 架构显卡上使用
-        max_model_len=max_model_len
+        max_model_len=max_model_len,
+        max_num_seqs = 256,
     )
 
     # 3. 设置采样参数
