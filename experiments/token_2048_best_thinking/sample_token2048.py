@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-阶段1：从DAPO-MATH-17k中随机采样1k个问题，并生成8个token_2048
-
 功能：
 1. 加载DAPO-MATH-17k数据集
-2. 使用固定种子随机采样1000个问题（确保在不同平台和服务器上可复现）
+2. 使用固定种子随机采样 N 个问题（确保在不同平台和服务器上可复现）
 3. 调用verl的main_generation生成responses
 4. 保存结果（同时保存jsonl和parquet格式）
 
 输出格式（jsonl和parquet）：
-- 8k个token_2048：{token_id, q_id, question, gt_answer, token_2048}
-  - token_id: 全局唯一ID (0-7999)
-  - q_id: 问题ID (0-999)
+- token_2048：{token_id, q_id, question, gt_answer, token_2048}
+  - token_id: 全局唯一ID 
+  - q_id: 问题ID 
   - question: 原始问题
   - gt_answer: ground truth答案
   - token_2048: 生成的2048个token
@@ -301,7 +299,7 @@ def main():
     print("-" * 80)
     
     # 导入简单生成函数
-    from my_vllm import generate_responses
+    from generate_vllm import generate_responses
     
     print("\n生成配置：")
     print(f"- 模型: {PathConfig.MODEL_PATH}")
@@ -324,8 +322,9 @@ def main():
     
     generate_responses(
         model_path=PathConfig.MODEL_PATH,
-        input_parquet=sampled_questions_path,
-        output_parquet=PathConfig.STAGE1_RAW_OUTPUT,
+        input_json_path=sampled_questions_path,
+        output_format_json_path=PathConfig.OUTPUT_FORMAT_JSON_PATH,
+        output_rollouts_path=PathConfig.ROLLOUT_JSON_PATH,
         n_samples=Stage1Config.N_SAMPLES,
         max_new_tokens=Stage1Config.MAX_NEW_TOKENS,
         temperature=Stage1Config.TEMPERATURE,
