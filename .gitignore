@@ -16,6 +16,9 @@ __pycache__/
 dataset/*
 tensorflow/my_graph/*
 .idea/
+config.py
+
+
 # C extensions
 *.so
 outputs*/

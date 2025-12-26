@@ -25,16 +25,22 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
-# 固定随机种子，确保采样可复现
-# RANDOM_SEED = 42
-RANDOM_SEED = 24
+# 导入配置
+from configs.config import (
+    RANDOM_SEED,
+    PathConfig,
+    SamplingConfig,
+    Stage1Config
+)
 
 
 def prepare_dapo_math_sample(
-    dataset_name: str = "BytedTsinghua-SIA/DAPO-Math-17k",
-    sample_size: int = 1000,
-    output_path: str = "outputs/seed24_8query.parquet",
-    seed: int = RANDOM_SEED
+    dataset_name: str,
+    dataset_local_path: str,
+    sample_size: int,
+    output_path: str,
+    seed: int,
+    system_prompt: str,
 ):
     """
     从DAPO-MATH数据集中采样问题并准备为verl格式
@@ -43,14 +49,16 @@ def prepare_dapo_math_sample(
     
     Args:
         dataset_name: HuggingFace数据集名称
+        dataset_local_path: 本地数据集路径
         sample_size: 采样数量
         output_path: 输出路径
-        seed: 随机种子（默认42，确保在不同平台和服务器上可复现）
+        seed: 随机种子（确保在不同平台和服务器上可复现）
+        system_prompt: 系统提示词
     """
     print(f"[阶段1] 正在加载数据集: {dataset_name}")
     print(f"随机种子: {seed} (确保在不同平台和服务器上可复现)")
     
-    local_path = os.path.expanduser("/datacenter/datasets/BytedTsinghua-SIA/DAPO-Math-17k/data/dapo-math-17k.parquet")
+    local_path = os.path.expanduser(dataset_local_path)
     if os.path.exists(local_path):
         dataset = pd.read_parquet(local_path)
         dataset = dataset.to_dict('records')
@@ -128,7 +136,7 @@ def prepare_dapo_math_sample(
             gt_answer = str(gt_answer)
 
         prompt = [
-            {"role": "system", "content": "You are a helpful math assistant. Follow the user's instructions exactly."},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": question_text}]
         
         sampled_data.append({
@@ -192,7 +200,7 @@ def process_generation_output(
     generation_output_path: str,
     sampled_questions_path: str,
     final_output_base: str,
-    n_samples: int = 8
+    n_samples: int,
 ):
     """
     处理生成结果，将其组织为实验需要的格式
@@ -263,7 +271,6 @@ def process_generation_output(
 
 
 def main():
-    n_samples = 256
     """
     主函数：完整的阶段1流程
     """
@@ -278,34 +285,32 @@ def main():
     print(f"工作目录: {exp_root}\n")
     
     # 步骤1：采样问题
-    print("步骤1/3：从DAPO-MATH-17k采样1000个问题")
+    print("步骤1/3：从DAPO-MATH-17k采样问题")
     print("-" * 80)
     sampled_questions_path = prepare_dapo_math_sample(
-        dataset_name="BytedTsinghua-SIA/DAPO-Math-17k",
-        sample_size=1000,
-        output_path="outputs/stage1_sampled_questions.parquet",
-        seed=RANDOM_SEED
+        dataset_name=PathConfig.DATASET_NAME,
+        dataset_local_path=PathConfig.DATASET_LOCAL_PATH,
+        sample_size=SamplingConfig.SAMPLE_SIZE,
+        output_path=PathConfig.STAGE1_SAMPLED_QUESTIONS,
+        seed=RANDOM_SEED,
+        system_prompt=SamplingConfig.SYSTEM_PROMPT,
     )
     
     # 步骤2：调用简单生成脚本
-    print("\n步骤2/3：调用简单生成脚本生成8个token_2048")
+    print("\n步骤2/3：调用简单生成脚本生成token_2048")
     print("-" * 80)
     
     # 导入简单生成函数
     from my_vllm import generate_responses
     
-    model_path = "/datacenter/models/Qwen/Qwen3-4B-Instruct-2507"
-    input_path = sampled_questions_path
-    output_path = "outputs/stage1_raw_output.parquet"
-    
     print("\n生成配置：")
-    print(f"- 模型: {model_path}")
-    print(f"- 输入: {input_path}")
-    print(f"- 输出: {output_path}")
-    print(f"- 采样次数: 8")
-    print(f"- 生成长度: 2048 tokens")
-    print(f"- 温度: 1.0")
-    print(f"- Top-p: 0.95")
+    print(f"- 模型: {PathConfig.MODEL_PATH}")
+    print(f"- 输入: {sampled_questions_path}")
+    print(f"- 输出: {PathConfig.STAGE1_RAW_OUTPUT}")
+    print(f"- 采样次数: {Stage1Config.N_SAMPLES}")
+    print(f"- 生成长度: {Stage1Config.MAX_NEW_TOKENS} tokens")
+    print(f"- 温度: {Stage1Config.TEMPERATURE}")
+    print(f"- Top-p: {Stage1Config.TOP_P}")
     print(f"- 随机种子: {RANDOM_SEED}")
     
     print("\n开始生成（这可能需要一段时间）...")
@@ -318,15 +323,15 @@ def main():
     np.random.seed(RANDOM_SEED)
     
     generate_responses(
-        model_path=model_path,
-        input_parquet=input_path,
-        output_parquet=output_path,
-        n_samples=n_samples,
-        max_new_tokens=2048,
-        temperature=1.0,
-        top_p=0.95,
-        max_model_len=4096,
-        tensor_parallel_size=4
+        model_path=PathConfig.MODEL_PATH,
+        input_parquet=sampled_questions_path,
+        output_parquet=PathConfig.STAGE1_RAW_OUTPUT,
+        n_samples=Stage1Config.N_SAMPLES,
+        max_new_tokens=Stage1Config.MAX_NEW_TOKENS,
+        temperature=Stage1Config.TEMPERATURE,
+        top_p=Stage1Config.TOP_P,
+        max_model_len=Stage1Config.MAX_MODEL_LEN,
+        tensor_parallel_size=Stage1Config.TENSOR_PARALLEL_SIZE,
     )
     
     print("\n生成完成！")
@@ -335,10 +340,10 @@ def main():
     print("\n步骤3/3：处理生成结果并保存为jsonl+parquet格式")
     print("-" * 80)
     final_output_path = process_generation_output(
-        generation_output_path="outputs/stage1_raw_output.parquet",
+        generation_output_path=PathConfig.STAGE1_RAW_OUTPUT,
         sampled_questions_path=sampled_questions_path,
-        final_output_base="outputs/stage1_output",  # 不含扩展名
-        n_samples=n_samples
+        final_output_base=PathConfig.STAGE1_OUTPUT,  # 不含扩展名
+        n_samples=Stage1Config.N_SAMPLES,
     )
     
     print("\n" + "=" * 80)
