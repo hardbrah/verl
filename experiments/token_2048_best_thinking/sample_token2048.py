@@ -34,9 +34,9 @@ from configs.config import (
 
 def prepare_dapo_math_sample(
     dataset_name: str,
-    dataset_local_path: str,
-    sample_size: int,
-    output_path: str,
+    dataset_local_parquet_path: str,
+    query_sample_size: int,
+    output_jsonl_path: str,
     seed: int,
     system_prompt: str,
 ):
@@ -48,15 +48,15 @@ def prepare_dapo_math_sample(
     Args:
         dataset_name: HuggingFace数据集名称
         dataset_local_path: 本地数据集路径
-        sample_size: 采样数量
-        output_path: 输出路径
+        query_sample_size: 采样数量
+        output_jsonl_path: 输出路径
         seed: 随机种子（确保在不同平台和服务器上可复现）
         system_prompt: 系统提示词
     """
     print(f"[阶段1] 正在加载数据集: {dataset_name}")
     print(f"随机种子: {seed} (确保在不同平台和服务器上可复现)")
     
-    local_path = os.path.expanduser(dataset_local_path)
+    local_path = os.path.expanduser(dataset_local_parquet_path)
     if os.path.exists(local_path):
         dataset = pd.read_parquet(local_path)
         dataset = dataset.to_dict('records')
@@ -73,26 +73,26 @@ def prepare_dapo_math_sample(
     np.random.seed(seed)
     total_size = len(dataset)
     
-    if sample_size > total_size:
-        print(f"警告：请求的采样数量 ({sample_size}) 大于数据集大小 ({total_size})")
+    if query_sample_size > total_size:
+        print(f"警告：请求的采样数量 ({query_sample_size}) 大于数据集大小 ({total_size})")
         print(f"将使用全部 {total_size} 个问题")
-        sample_size = total_size
+        query_sample_size = total_size
         indices = list(range(total_size))
     else:
         # 使用固定种子采样，确保可复现
-        indices = np.random.choice(total_size, size=sample_size, replace=False).tolist()
+        indices = np.random.choice(total_size, size=query_sample_size, replace=False).tolist()
         # 保存采样索引，便于复现
-        indices_save_path = output_path.replace('.parquet', '_sampling_indices.json')
+        indices_save_path = output_jsonl_path.replace('.parquet', '_sampling_indices.json')
         with open(indices_save_path, 'w') as f:
             json.dump({
                 'seed': seed,
-                'sample_size': sample_size,
+                'sample_size': query_sample_size,
                 'total_size': total_size,
                 'indices': indices
             }, f, indent=2)
         print(f"采样索引已保存到: {indices_save_path}")
     
-    print(f"随机采样 {sample_size} 个问题")
+    print(f"随机采样 {query_sample_size} 个问题")
     
     # 准备数据
     sampled_data = []
@@ -143,25 +143,14 @@ def prepare_dapo_math_sample(
             'gt_answer': gt_answer,
             'prompt': prompt  # 仅用于verl生成
         })
-    
-    # 保存为parquet文件
-    df = pd.DataFrame(sampled_data)
-    os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
-    df.to_parquet(output_path, index=False)
 
     # 保存为jsonl文件
-    jsonl_path = output_path.replace('.parquet', '.jsonl')
-    with open(jsonl_path, 'w', encoding='utf-8') as f:
+    with open(output_jsonl_path, 'w', encoding='utf-8') as f:
         for item in sampled_data:
             json.dump(item, f, ensure_ascii=False)
             f.write('\n')
-    print(f"JSONL格式已保存: {jsonl_path}")
-    
-    print(f"采样完成，已保存到: {output_path}")
-    print(f"数据格式预览：")
-    print(df[['q_id', 'question', 'gt_answer']].head(2))
-    
-    return output_path
+    print(f"JSONL格式已保存: {output_jsonl_path}")
+    return output_jsonl_path
 
 
 def save_dual_format(data, base_path):
@@ -195,8 +184,8 @@ def save_dual_format(data, base_path):
 
 
 def process_generation_output(
-    generation_output_path: str,
-    sampled_questions_path: str,
+    generation_output_jsonl_path: str,
+    sampled_questions_jsonl_path: str,
     final_output_base: str,
     n_samples: int,
 ):
@@ -206,16 +195,18 @@ def process_generation_output(
     为每个token_2048分配全局唯一的token_id (0-7999)
     
     Args:
-        generation_output_path: verl生成的原始输出路径
-        sampled_questions_path: 采样的问题路径
+        generation_output_jsonl_path: verl生成的原始输出路径
+        sampled_questions_jsonl_path: 采样的问题路径
         final_output_base: 最终输出路径（不含扩展名）
         n_samples: 每个问题的采样数
     """
     print(f"[阶段1] 正在处理生成结果...")
     
     # 读取生成结果
-    gen_df = pd.read_parquet(generation_output_path)
-    questions_df = pd.read_parquet(sampled_questions_path)
+    with open(generation_output_jsonl_path, 'r') as f:
+        gen_data = [json.loads(line) for line in f]
+    with open(sampled_questions_jsonl_path, 'r') as f:
+        questions_data = [json.loads(line) for line in f]
     
     # verl的输出格式：每一行包含一个问题的所有n_samples个responses
     # gen_df['responses'] 是一个列表，包含n个response
@@ -223,11 +214,9 @@ def process_generation_output(
     result_data = []
     token_id = 0  # 全局token_id计数器
     
-    for idx, row in gen_df.iterrows():
+    for idx, responses in enumerate(gen_data):
         q_id = idx
-        question_data = questions_df.iloc[q_id]
-        
-        responses = row['responses']  # 这是一个包含n个response的列表
+        question_data = questions_data[q_id]
         
         for sample_idx, response in enumerate(responses):
             result_data.append({
@@ -240,7 +229,7 @@ def process_generation_output(
             token_id += 1
     
     print(f"处理完成，生成 {len(result_data)} 条数据")
-    print(f"预期：{len(questions_df)} 个问题 × {n_samples} 个采样 = {len(questions_df) * n_samples} 条")
+    print(f"预期：{len(questions_data)} 个问题 × {n_samples} 个采样 = {len(questions_data) * n_samples} 条")
     print(f"token_id 范围: 0 - {token_id - 1}")
     
     # 同时保存jsonl和parquet格式
@@ -285,11 +274,11 @@ def main():
     # 步骤1：采样问题
     print("步骤1/3：从DAPO-MATH-17k采样问题")
     print("-" * 80)
-    sampled_questions_path = prepare_dapo_math_sample(
+    jsonl_path = prepare_dapo_math_sample(
         dataset_name=PathConfig.DATASET_NAME,
-        dataset_local_path=PathConfig.DATASET_LOCAL_PATH,
-        sample_size=SamplingConfig.SAMPLE_SIZE,
-        output_path=PathConfig.STAGE1_SAMPLED_QUESTIONS,
+        dataset_local_parquet_path=PathConfig.DATASET_LOCAL_PATH,
+        query_sample_size=SamplingConfig.QUERY_SAMPLE_SIZE,
+        output_jsonl_path=PathConfig.STAGE1_SAMPLED_QUESTIONS,
         seed=RANDOM_SEED,
         system_prompt=SamplingConfig.SYSTEM_PROMPT,
     )
@@ -303,7 +292,7 @@ def main():
     
     print("\n生成配置：")
     print(f"- 模型: {PathConfig.MODEL_PATH}")
-    print(f"- 输入: {sampled_questions_path}")
+    print(f"- 输入: {jsonl_path}")
     print(f"- 输出: {PathConfig.STAGE1_RAW_OUTPUT}")
     print(f"- 采样次数: {Stage1Config.N_SAMPLES}")
     print(f"- 生成长度: {Stage1Config.MAX_NEW_TOKENS} tokens")
@@ -322,9 +311,9 @@ def main():
     
     generate_responses(
         model_path=PathConfig.MODEL_PATH,
-        input_json_path=sampled_questions_path,
-        output_format_json_path=PathConfig.OUTPUT_FORMAT_JSON_PATH,
-        output_rollouts_path=PathConfig.ROLLOUT_JSON_PATH,
+        input_jsonl_path=jsonl_path,
+        output_format_jsonl_path=PathConfig.OUTPUT_FORMAT_JSONL_PATH,
+        output_rollouts_jsonl_path=PathConfig.ROLLOUT_JSONL_PATH,
         n_samples=Stage1Config.N_SAMPLES,
         max_new_tokens=Stage1Config.MAX_NEW_TOKENS,
         temperature=Stage1Config.TEMPERATURE,
@@ -339,8 +328,8 @@ def main():
     print("\n步骤3/3：处理生成结果并保存为jsonl+parquet格式")
     print("-" * 80)
     final_output_path = process_generation_output(
-        generation_output_path=PathConfig.STAGE1_RAW_OUTPUT,
-        sampled_questions_path=sampled_questions_path,
+        generation_output_jsonl_path=PathConfig.STAGE1_RAW_OUTPUT,
+        sampled_questions_jsonl_path=jsonl_path,
         final_output_base=PathConfig.STAGE1_OUTPUT,  # 不含扩展名
         n_samples=Stage1Config.N_SAMPLES,
     )

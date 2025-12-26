@@ -12,9 +12,9 @@ from configs.config import PathConfig, Stage3Config
 
 def generate_responses(
     model_path: str,
-    input_json_path: str,
-    output_format_json_path: str,
-    output_rollouts_path: str,
+    input_jsonl_path: str,
+    output_format_jsonl_path: str,
+    output_rollouts_jsonl_path: str,
     n_samples: int = 8,
     max_new_tokens: int = 2048,
     temperature: float = 1.0,
@@ -52,9 +52,9 @@ def generate_responses(
         dtype: 模型数据类型
         trust_remote_code: 是否信任远程代码
     """
-    # 1.读取 formatted_prompts.json
-    with open(input_json_path, "r") as f:
-        data = json.load(f)
+    # 1.读取 input_jsonl_path.jsonl
+    with open(input_jsonl_path, "r") as f:
+        data = [json.loads(line) for line in f]
     
     # 限制处理的prompt数量
     if prompt_limit is not None:
@@ -69,12 +69,12 @@ def generate_responses(
         question = item["question"]
         questions.append(question)
     formatted_prompts = tokenizer.apply_chat_template(questions, add_generation_prompt=True, tokenize=False)
-    with open(output_format_json_path, "w") as f:
+    with open(output_format_jsonl_path, "a") as f:
         for question, formatted_prompt in zip(questions, formatted_prompts):
             f.write(json.dumps({
                 "question": question,
                 "formatted_prompt": formatted_prompt,
-            }) + "\n")
+                }) + "\n")
 
     # 2. 初始化 vllm 引擎
     print(f"Initializing vLLM engine with model {model_path}")
@@ -118,7 +118,10 @@ def generate_responses(
         all_responses.append(batch_responses)
     print("rollouts generated")
     print("="*100)
-    with open(output_rollouts_path, "w") as f:
-        json.dump(all_responses, f, ensure_ascii=False, indent=4)
+    with open(output_rollouts_jsonl_path, "a") as f:
+        for response in all_responses:
+            f.write(json.dumps({
+                "response": response,
+            }) + "\n")
     print("rollouts saved")
     print("="*100)
