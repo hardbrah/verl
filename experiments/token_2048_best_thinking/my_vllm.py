@@ -7,15 +7,12 @@
 import json
 from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
-from configs.config import PathConfig, Stage3Config
+from configs.config import PathConfig, VLLMConfig
 
 
 def generate_responses(
     model_path: str,
-    formatted_prompts_path: str,
-    stage2_continuation_prompts_path: str,
-    stage3_rollouts_path: str,
-    final_complete_rollouts_path: str,
+    formatted_prompts_json_path: str,
     n_samples: int = 8,
     max_new_tokens: int = 2048,
     temperature: float = 1.0,
@@ -26,7 +23,6 @@ def generate_responses(
     max_num_seqs: int = 256,
     repetition_penalty: float = 1.05,
     ignore_eos: bool = False,
-    prompt_limit: int = None,
     dtype: str = "bfloat16",
     trust_remote_code: bool = True,
 ):
@@ -37,8 +33,6 @@ def generate_responses(
         model_path: 模型路径
         formatted_prompts_path: 输入的格式化prompts文件路径
         stage2_continuation_prompts_path: stage2继续生成的prompts路径
-        stage3_rollouts_path: stage3 rollouts输出路径
-        final_complete_rollouts_path: 最终完整rollouts输出路径
         n_samples: 每个问题生成多少个响应 (Best-of-N / Rollout)
         max_new_tokens: 最大生成token数
         temperature: 采样温度
@@ -53,13 +47,11 @@ def generate_responses(
         dtype: 模型数据类型
         trust_remote_code: 是否信任远程代码
     """
-    # 1.读取 formatted_prompts.json
-    with open(formatted_prompts_path, "r") as f:
+    # 1.读取 fake_formatted_prompts.json
+    with open(formatted_prompts_json_path, "r") as f:
         formatted_prompts = json.load(f)
-    
-    # 限制处理的prompt数量
-    if prompt_limit is not None:
-        formatted_prompts = formatted_prompts[:prompt_limit]
+
+    # formatted_prompts = formatted_prompts[:1]
     
     print("Total number of prompts: ", len(formatted_prompts))
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
@@ -104,16 +96,17 @@ def generate_responses(
         # output.outputs 是一个 list，长度为 n_samples
         batch_responses = [o.text for o in output.outputs]
         all_responses.append(batch_responses)
+
     print("Stage3 rollouts generated")
     print("="*100)
-    with open(stage3_rollouts_path, "w") as f:
+    with open(PathConfig.STAGE3_ROLLOUTS_JSON_PATH, "w") as f:
         json.dump(all_responses, f, ensure_ascii=False, indent=4)
     print("Stage3 rollouts saved")
     print("="*100)
 
-    with open(final_complete_rollouts_path, "a") as f:
-        with open(stage2_continuation_prompts_path, "r") as f_1:
-            for line, responses in zip(f_1, all_responses):
+    with open(PathConfig.FINAL_COMPLETE_ROLLOUTS_JSONL_PATH, "a") as f:
+        with open(PathConfig.STAGE1_OUTPUT_JSONL, "r") as f_1:
+            for line,responses in zip(f_1,all_responses):
                 data = json.loads(line)
                 token_id = data["token_id"]
                 q_id = data["q_id"]
@@ -131,27 +124,20 @@ def generate_responses(
                     }) + "\n")
 
 
-
-
-
 if __name__ == "__main__":
     print("="*100)
     print("Starting generation...")
     print("="*100)
     generate_responses(
         model_path=PathConfig.MODEL_PATH,
-        formatted_prompts_path=PathConfig.STAGE3_FORMATTED_PROMPTS,
-        stage2_continuation_prompts_path=PathConfig.STAGE2_CONTINUATION_PROMPTS,
-        stage3_rollouts_path=PathConfig.STAGE3_ROLLOUTS,
-        final_complete_rollouts_path=PathConfig.FINAL_COMPLETE_ROLLOUTS,
-        n_samples=Stage3Config.N_SAMPLES,
-        max_new_tokens=Stage3Config.MAX_NEW_TOKENS,
-        temperature=Stage3Config.TEMPERATURE,
-        top_p=Stage3Config.TOP_P,
-        max_model_len=Stage3Config.MAX_MODEL_LEN,
-        tensor_parallel_size=Stage3Config.TENSOR_PARALLEL_SIZE,
-        gpu_memory_utilization=Stage3Config.GPU_MEMORY_UTILIZATION,
-        prompt_limit=Stage3Config.PROMPT_LIMIT,
+        formatted_prompts_json_path=PathConfig.FAKE_FORMATTED_PROMPTS_JSON,
+        n_samples=VLLMConfig.N_SAMPLES,
+        max_new_tokens=VLLMConfig.MAX_NEW_TOKENS,
+        temperature=VLLMConfig.TEMPERATURE,
+        top_p=VLLMConfig.TOP_P,
+        max_model_len=VLLMConfig.MAX_MODEL_LEN,
+        tensor_parallel_size=VLLMConfig.TENSOR_PARALLEL_SIZE,
+        gpu_memory_utilization=VLLMConfig.GPU_MEMORY_UTILIZATION,
     )
     print("="*100)
     print("Generation completed")

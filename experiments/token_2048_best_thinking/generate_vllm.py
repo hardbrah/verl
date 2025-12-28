@@ -54,26 +54,32 @@ def generate_responses(
     """
     # 1.读取 input_jsonl_path.jsonl
     with open(input_jsonl_path, "r") as f:
-        data = [json.loads(line) for line in f]
+        data = [json.loads(line) for line in f] # (q_id, question, gt_answer, prompt)
+
     
-    # 限制处理的prompt数量
-    if prompt_limit is not None:
-        data = data[:prompt_limit]
+    # # 限制处理的prompt数量
+    # if prompt_limit is not None:
+    #     data = data[:prompt_limit]
     
         
     print("Total number of prompts: ", len(data))
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
 
+    formatted_prompts = []
     questions = []
     for item in data:
         question = item["question"]
         questions.append(question)
-    formatted_prompts = tokenizer.apply_chat_template(questions, add_generation_prompt=True, tokenize=False)
-    with open(output_format_jsonl_path, "a") as f:
+        prompt = item["prompt"]
+        formatted_prompt = tokenizer.apply_chat_template(prompt, add_generation_prompt=True, tokenize=False)
+        formatted_prompts.append(formatted_prompt)
+    with open(output_format_jsonl_path, "w") as f:
         for question, formatted_prompt in zip(questions, formatted_prompts):
             f.write(json.dumps({
+                "q_id": item["q_id"],
                 "question": question,
                 "formatted_prompt": formatted_prompt,
+                "gt_answer": item["gt_answer"],
                 }) + "\n")
 
     # 2. 初始化 vllm 引擎
@@ -103,7 +109,7 @@ def generate_responses(
     # 4. 执行生成
     print(f"Generating {n_samples} responses for {len(data)} prompts...")
     # vllm 会自动处理 batching，不需要手动分 batch
-    outputs = llm.generate(data, sampling_params)
+    outputs = llm.generate(formatted_prompts, sampling_params)
 
     # 5. 解析结果
     all_responses = []
@@ -119,9 +125,9 @@ def generate_responses(
     print("rollouts generated")
     print("="*100)
     with open(output_rollouts_jsonl_path, "a") as f:
-        for response in all_responses:
+        for responses in all_responses:  
             f.write(json.dumps({
-                "response": response,
+                "response": responses,
             }) + "\n")
     print("rollouts saved")
     print("="*100)

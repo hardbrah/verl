@@ -1,10 +1,9 @@
 import json
 from collections import defaultdict
 from verl.utils.reward_score.math_dapo import compute_score
-
-def select_best_thought(choose_best:bool=False, cal_acc:bool=True):
-    json_path = "/mnt/nas/chenhaotian/verl/experiments/token_2048_best_thinking/outputs/final_complete_rollouts_51200.jsonl"
-    with open(json_path, "r") as f:
+from configs.config import BestThoughtConfig
+def select_best_thought(complete_rollouts_jsonl_path:str, output_token2048_acc_jsonl_path:str,choose_best:bool=False, cal_acc:bool=True):
+    with open(complete_rollouts_jsonl_path, "r") as f:
         data = [json.loads(line) for line in f]
 
     # 记录每个问题对应的token_id集合
@@ -59,7 +58,7 @@ def select_best_thought(choose_best:bool=False, cal_acc:bool=True):
     
     
     if cal_acc:
-        with open("/mnt/nas/chenhaotian/verl/experiments/token_2048_best_thinking/outputs/200query_8token2048_32sample_acc.jsonl", "a") as f:
+        with open(output_token2048_acc_jsonl_path, "a") as f:
             for q_id,token_ids in q_id2token_ids.items():
                 for token_id in token_ids:
                     item = data[token_id2idx[token_id]]
@@ -75,4 +74,4 @@ def select_best_thought(choose_best:bool=False, cal_acc:bool=True):
             
         print(f"Calculated {len(data)} accuracies")
 if __name__ == "__main__":
-    select_best_thought(choose_best=False, cal_acc=True)
+    select_best_thought(complete_rollouts_jsonl_path=BestThoughtConfig.COMPLETE_ROLLOUTS_JSONL_PATH, output_token2048_acc_jsonl_path=BestThoughtConfig.OUTPUT_TOKEN2048_ACC_JSONL_PATH, choose_best=False, cal_acc=True)

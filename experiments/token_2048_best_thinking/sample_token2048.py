@@ -82,7 +82,7 @@ def prepare_dapo_math_sample(
         # 使用固定种子采样，确保可复现
         indices = np.random.choice(total_size, size=query_sample_size, replace=False).tolist()
         # 保存采样索引，便于复现
-        indices_save_path = output_jsonl_path.replace('.parquet', '_sampling_indices.json')
+        indices_save_path = output_jsonl_path.replace('.jsonl', '_sampling_indices.json')
         with open(indices_save_path, 'w') as f:
             json.dump({
                 'seed': seed,
@@ -144,6 +144,8 @@ def prepare_dapo_math_sample(
             'prompt': prompt  # 仅用于verl生成
         })
 
+    sampled_data = sampled_data[16:24]
+
     # 保存为jsonl文件
     with open(output_jsonl_path, 'w', encoding='utf-8') as f:
         for item in sampled_data:
@@ -186,7 +188,7 @@ def save_dual_format(data, base_path):
 def process_generation_output(
     generation_output_jsonl_path: str,
     sampled_questions_jsonl_path: str,
-    final_output_base: str,
+    final_output_jsonl_path: str,
     n_samples: int,
 ):
     """
@@ -197,7 +199,7 @@ def process_generation_output(
     Args:
         generation_output_jsonl_path: verl生成的原始输出路径
         sampled_questions_jsonl_path: 采样的问题路径
-        final_output_base: 最终输出路径（不含扩展名）
+        final_output_jsonl_path: 最终输出jsonl路径
         n_samples: 每个问题的采样数
     """
     print(f"[阶段1] 正在处理生成结果...")
@@ -214,9 +216,10 @@ def process_generation_output(
     result_data = []
     token_id = 0  # 全局token_id计数器
     
-    for idx, responses in enumerate(gen_data):
+    for idx, responses_dict in enumerate(gen_data):
         q_id = idx
         question_data = questions_data[q_id]
+        responses = responses_dict['response']
         
         for sample_idx, response in enumerate(responses):
             result_data.append({
@@ -233,17 +236,12 @@ def process_generation_output(
     print(f"token_id 范围: 0 - {token_id - 1}")
     
     # 同时保存jsonl和parquet格式
-    print("\n保存数据（jsonl和parquet格式）...")
-    parquet_path, jsonl_path = save_dual_format(result_data, final_output_base)
-    
-    # 统计信息
-    result_df = pd.DataFrame(result_data)
-    print("\n统计信息：")
-    print(f"- token_id范围: {result_df['token_id'].min()} - {result_df['token_id'].max()}")
-    print(f"- q_id范围: {result_df['q_id'].min()} - {result_df['q_id'].max()}")
-    print(f"- 平均token_2048长度: {result_df['token_2048'].str.len().mean():.0f} 字符")
-    print(f"- 最短token_2048: {result_df['token_2048'].str.len().min()} 字符")
-    print(f"- 最长token_2048: {result_df['token_2048'].str.len().max()} 字符")
+    print("\n保存数据jsonl格式...")
+    with open(final_output_jsonl_path, "w") as f:
+        for item in result_data:
+            json.dump(item, f, ensure_ascii=False)
+            f.write("\n")
+    print(f"✓ JSONL格式已保存: {final_output_jsonl_path}")
     
     # 显示示例数据
     print("\n数据示例（前2条）：")
@@ -254,7 +252,7 @@ def process_generation_output(
         print(f"    gt_answer: {item['gt_answer']}")
         print(f"    token_2048: {item['token_2048'][:100]}...")
     
-    return parquet_path
+    return final_output_jsonl_path
 
 
 def main():
@@ -262,7 +260,7 @@ def main():
     主函数：完整的阶段1流程
     """
     print("=" * 80)
-    print("阶段1：采样1k问题并生成8个token_2048")
+    print(f"阶段1：采样{SamplingConfig.QUERY_SAMPLE_SIZE}个问题并生成{Stage1Config.N_SAMPLES}个token_2048")
     print("=" * 80)
     print(f"随机种子: {RANDOM_SEED} (确保在不同平台可复现)")
     
@@ -312,14 +310,18 @@ def main():
     generate_responses(
         model_path=PathConfig.MODEL_PATH,
         input_jsonl_path=jsonl_path,
-        output_format_jsonl_path=PathConfig.OUTPUT_FORMAT_JSONL_PATH,
-        output_rollouts_jsonl_path=PathConfig.ROLLOUT_JSONL_PATH,
+        output_format_jsonl_path=PathConfig.STAGE2_OUTPUT_FORMAT_JSONL_PATH,
+        output_rollouts_jsonl_path=PathConfig.STAGE1_RAW_OUTPUT,
         n_samples=Stage1Config.N_SAMPLES,
         max_new_tokens=Stage1Config.MAX_NEW_TOKENS,
         temperature=Stage1Config.TEMPERATURE,
         top_p=Stage1Config.TOP_P,
         max_model_len=Stage1Config.MAX_MODEL_LEN,
         tensor_parallel_size=Stage1Config.TENSOR_PARALLEL_SIZE,
+        gpu_memory_utilization=Stage1Config.GPU_MEMORY_UTILIZATION,
+        dtype=Stage1Config.DTYPE,
+        trust_remote_code=Stage1Config.TRUST_REMOTE_CODE,
+        max_num_seqs=Stage1Config.MAX_NUM_SEQS,
     )
     
     print("\n生成完成！")
@@ -327,15 +329,15 @@ def main():
     # 步骤3：处理输出
     print("\n步骤3/3：处理生成结果并保存为jsonl+parquet格式")
     print("-" * 80)
-    final_output_path = process_generation_output(
+    final_output_jsonl_path = process_generation_output(
         generation_output_jsonl_path=PathConfig.STAGE1_RAW_OUTPUT,
         sampled_questions_jsonl_path=jsonl_path,
-        final_output_base=PathConfig.STAGE1_OUTPUT,  # 不含扩展名
+        final_output_jsonl_path=PathConfig.STAGE1_OUTPUT_JSONL,  # 不含扩展名
         n_samples=Stage1Config.N_SAMPLES,
     )
     
     print("\n" + "=" * 80)
-    print("阶段1完成！")
+    print("阶段1完成！完整数据存储在{}".format(final_output_jsonl_path))
     print("=" * 80)
 
 
