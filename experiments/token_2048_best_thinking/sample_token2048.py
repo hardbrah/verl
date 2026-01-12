@@ -217,8 +217,8 @@ def process_generation_output(
     token_id = 0  # 全局token_id计数器
     
     for idx, responses_dict in enumerate(gen_data):
-        q_id = idx
-        question_data = questions_data[q_id]
+        question_data = questions_data[idx]
+        q_id = question_data['q_id']
         responses = responses_dict['response']
         
         for sample_idx, response in enumerate(responses):
