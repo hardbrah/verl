@@ -392,6 +392,10 @@ class AgentLoopWorkerBase:
             )
         outputs = await asyncio.gather(*tasks)
 
+        # [极简修改] 如果发现 run 返回的是列表，原地拍平
+        if outputs and isinstance(outputs[0], list):
+            outputs = [item for sublist in outputs for item in sublist]
+
         output = self._postprocess(outputs)
 
         return output

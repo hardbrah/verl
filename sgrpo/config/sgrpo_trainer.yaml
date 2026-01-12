@@ -1,0 +1,258 @@
+# S-GRPO Trainer Configuration
+# Sampling-based GRPO with Decaying Reward
+#
+# Key features:
+# 1. Generates complete responses (CoT0) first
+# 2. Creates truncated CoTs (CoT1, ..., CoTm) with uniform sampling
+# 3. Forces model to answer from truncated CoTs
+# 4. Uses decaying reward based on answer correctness order
+# 5. Uses GRPO advantage without std normalization
+
+# specify the default per-component configs
+defaults:
+
+  # Actor config
+  - actor@actor_rollout_ref.actor: dp_actor
+
+  # Data config
+  - data@data: legacy_data
+
+  # Reward manager config
+  - reward_manager@reward_manager
+
+  # Reference model config
+  - ref@actor_rollout_ref.ref: dp_ref
+
+  # Rollout model config
+  - rollout@actor_rollout_ref.rollout: rollout
+
+  # Model config
+  - model@actor_rollout_ref.model: hf_model
+
+  # Critic model config (S-GRPO doesn't use critic, but config is needed for compatibility)
+  - critic@critic: dp_critic
+
+  # Reward model config
+  - reward_model@reward_model: dp_reward_loop
+
+  # Rollout correction config
+  - algorithm@algorithm.rollout_correction: rollout_correction
+
+  # load the reference default config, then apply the fields in the current yaml
+  - _self_
+
+# config for actor, rollout and reference model
+actor_rollout_ref:
+
+  # Whether it's a hybrid engine
+  hybrid_engine: true
+
+  # Timeout for operations executed against the process group
+  nccl_timeout: 600
+
+  # Rollout model config
+  rollout:
+    layered_summon: False
+
+# S-GRPO specific configuration
+sgrpo:
+
+  # Number of truncation points (m)
+  # The algorithm will uniformly sample m positions from the response
+  # to create m truncated chain-of-thoughts
+  num_truncations: 4
+
+  # Prompt to force model to stop thinking and output answer
+  # This is appended to truncated CoTs before answer generation
+  force_answer_prompt: "Time is limited, stop thinking and start answering.\n</think>\n\n"
+
+  # Maximum tokens for answer generation from truncated CoTs
+  answer_max_tokens: 256
+
+  # Minimum ratio of response to keep when truncating
+  # Ensures truncated CoTs have at least this fraction of tokens
+  min_truncation_ratio: 0.1
+
+  # Maximum ratio of response to keep when truncating
+  # Ensures at least (1 - max_truncation_ratio) tokens are removed
+  max_truncation_ratio: 0.9
+
+# custom reward function definition
+custom_reward_function:
+
+  # Path to customized reward function
+  # If not specified, default S-GRPO decaying reward will be used
+  path: null
+
+  # Name of the reward function
+  name: compute_score
+
+# config for the algorithm
+algorithm:
+
+  # Required for dataclass instantiation
+  _target_: verl.trainer.config.AlgoConfig
+
+  # Discount factor for future rewards
+  gamma: 1.0
+
+  # Trade-off between bias and variance (for GAE, not used in S-GRPO)
+  lam: 1.0
+
+  # Advantage estimator: Use "sgrpo" for S-GRPO algorithm
+  # S-GRPO uses GRPO-style advantage without std normalization
+  adv_estimator: sgrpo
+
+  # Whether to normalize advantages by std
+  # IMPORTANT: This should be False for S-GRPO
+  norm_adv_by_std_in_grpo: False
+
+  # Whether to enable in-reward KL penalty
+  use_kl_in_reward: False
+
+  # KL penalty type
+  kl_penalty: kl
+
+  # KL control configuration
+  kl_ctrl:
+    _target_: verl.trainer.config.KLControlConfig
+    type: fixed
+    kl_coef: 0.001
+    horizon: 10000
+    target_kl: 0.1
+
+  # Whether to enable preference feedback PPO (not used in S-GRPO)
+  use_pf_ppo: False
+
+  # Preference feedback PPO settings
+  pf_ppo:
+    reweight_method: pow
+    weight_pow: 2.0
+
+# config for the trainer
+trainer:
+
+  # Whether to balance batch sizes across distributed workers
+  balance_batch: True
+
+  # Number of epochs in training
+  total_epochs: 30
+
+  # Total training steps (can be set explicitly or derived from epochs)
+  total_training_steps: null
+
+  # Project name for experiment tracking
+  project_name: sgrpo_examples
+
+  # Experiment name for run identification
+  experiment_name: sgrpo_math
+
+  # Logging backends to use
+  logger: ["console", "wandb"]
+
+  # Number of generations to log during validation
+  log_val_generations: 0
+
+  # Directory for logging S-GRPO rollout samples (includes truncated inputs, responses, answers)
+  # Set to a path to enable detailed sample logging for debugging
+  rollout_data_dir: null
+
+  # Frequency for dumping S-GRPO samples (every N steps, -1 to disable)
+  # Recommended: same as save_freq or test_freq to avoid excessive disk usage
+  rollout_data_dump_freq: -1
+
+  # Directory for logging validation data
+  validation_data_dir: null
+
+  # Number of nodes used in training
+  nnodes: 1
+
+  # Number of GPUs per node
+  n_gpus_per_node: 8
+
+  # Save frequency for model checkpoints
+  save_freq: -1
+
+  # ESI redundant time for safety
+  esi_redundant_time: 0
+
+  # Resume mode: "auto", "disable", or "resume_path"
+  resume_mode: auto
+
+  # Path to resume training from
+  resume_from_path: null
+
+  # Whether to run validation before training begins
+  val_before_train: True
+
+  # Whether to run validation only
+  val_only: False
+
+  # Validation frequency (in training iterations)
+  test_freq: -1
+
+  # Number of iterations to warm up the critic
+  critic_warmup: 0
+
+  # Default path to distributed filesystem
+  default_hdfs_dir: null
+
+  # Whether to delete local checkpoints after loading
+  del_local_ckpt_after_load: False
+
+  # Default local directory for saving checkpoints
+  default_local_dir: checkpoints/${trainer.project_name}/${trainer.experiment_name}
+
+  # Maximum number of actor checkpoints to keep
+  max_actor_ckpt_to_keep: null
+
+  # Maximum number of critic checkpoints to keep
+  max_critic_ckpt_to_keep: null
+
+  # Timeout for Ray worker registration
+  ray_wait_register_center_timeout: 300
+
+  # Device to run training on
+  device: cuda
+
+  # Whether to use legacy worker implementation
+  use_legacy_worker_impl: auto
+
+# profiler configs
+global_profiler:
+  _target_: verl.utils.profiler.ProfilerConfig
+  tool: null
+  steps: null
+  profile_continuous_steps: False
+  save_path: "outputs/profile"
+  global_tool_config:
+    nsys:
+      _target_: verl.utils.profiler.config.NsightToolConfig
+      discrete: False
+      controller_nsight_options:
+        trace: "cuda,nvtx,cublas,ucx"
+        cuda-memory-usage: "true"
+        cuda-graph-trace: "graph"
+      worker_nsight_options:
+        trace: "cuda,nvtx,cublas,ucx"
+        cuda-memory-usage: "true"
+        cuda-graph-trace: "graph"
+        capture-range: "cudaProfilerApi"
+        capture-range-end: null
+        kill: none
+    torch_memory:
+      trace_alloc_max_entries: 100_000
+      stack_depth: 32
+      context: "all"
+      stacks: "all"
+      kw_args: {}
+
+# configs for TransferQueue
+transfer_queue:
+  enable: False
+
+# configs related to ray
+ray_kwargs:
+  ray_init:
+    num_cpus: null
+  timeline_json_file: null

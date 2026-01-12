@@ -41,26 +41,38 @@ class SingleTurnAgentLoop(AgentLoopBase):
         metrics = {}
         request_id = uuid4().hex
 
-        # Use processor if available for multimodal support
-        if self.processor is not None:
-            raw_prompt = await self.loop.run_in_executor(
-                None,
-                lambda: self.processor.apply_chat_template(
-                    messages,
-                    add_generation_prompt=True,
-                    tokenize=False,
-                    **self.apply_chat_template_kwargs,
-                ),
-            )
-            model_inputs = self.processor(text=[raw_prompt], images=image_data, return_tensors="pt")
-            prompt_ids = model_inputs.pop("input_ids").squeeze(0).tolist()
+        # Check if prompt_ids are already provided (e.g., from SGRPO truncated inputs)
+        # This allows bypassing apply_chat_template for pre-tokenized inputs
+        if "prompt_ids" in kwargs and kwargs["prompt_ids"] is not None:
+            prompt_ids = kwargs["prompt_ids"]
         else:
-            prompt_ids = await self.loop.run_in_executor(
-                None,
-                lambda: self.tokenizer.apply_chat_template(
-                    messages, add_generation_prompt=True, tokenize=True, **self.apply_chat_template_kwargs
-                ),
-            )
+            # Determine whether to add generation prompt
+            # Default is True, but can be overridden via apply_chat_template_kwargs
+            add_gen_prompt = self.apply_chat_template_kwargs.pop("add_generation_prompt", True)
+            
+            # Use processor if available for multimodal support
+            if self.processor is not None:
+                raw_prompt = await self.loop.run_in_executor(
+                    None,
+                    lambda: self.processor.apply_chat_template(
+                        messages,
+                        add_generation_prompt=add_gen_prompt,
+                        tokenize=False,
+                        **self.apply_chat_template_kwargs,
+                    ),
+                )
+                model_inputs = self.processor(text=[raw_prompt], images=image_data, return_tensors="pt")
+                prompt_ids = model_inputs.pop("input_ids").squeeze(0).tolist()
+            else:
+                prompt_ids = await self.loop.run_in_executor(
+                    None,
+                    lambda: self.tokenizer.apply_chat_template(
+                        messages, add_generation_prompt=add_gen_prompt, tokenize=True, **self.apply_chat_template_kwargs
+                    ),
+                )
+            
+            # Restore the kwarg for next call
+            self.apply_chat_template_kwargs["add_generation_prompt"] = add_gen_prompt
 
         with simple_timer("generate_sequences", metrics):
             output = await self.server_manager.generate(
