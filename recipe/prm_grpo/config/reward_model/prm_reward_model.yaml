@@ -1,0 +1,93 @@
+# PRM Reward Model Configuration
+# This configures the Process Reward Model for PRM-GRPO training.
+
+# Enable PRM reward model
+enable: True
+
+# Disable reward loop since PRM uses custom PRMRewardModelWorker
+use_reward_loop: False
+
+# Whether to deploy the model to a separate resource pool.
+# If true, n_gpus_per_node & nnodes will be used to determine the resource pool.
+enable_resource_pool: False
+n_gpus_per_node: 0
+nnodes: 0
+
+# Strategy for model sharding (not used for PRM, but kept for compatibility)
+strategy: fsdp
+
+# Model config (for standard RM compatibility)
+model:
+  # Input tokenizer path (uses actor path by default)
+  input_tokenizer: ${actor_rollout_ref.model.path}
+  
+  # Model path (PRM uses prm.backbone_path instead)
+  path: ${actor_rollout_ref.model.path}
+  
+  # External model implementation
+  external_lib: ${actor_rollout_ref.model.external_lib}
+  
+  # Trust remote code
+  trust_remote_code: False
+  
+  # Override HF config
+  override_config: {}
+  
+  # Use shared memory
+  use_shm: False
+  
+  # FSDP config
+  fsdp_config:
+    fsdp_size: -1
+    forward_prefetch: False
+    reshard_after_forward: True
+
+# PRM-specific configuration
+prm:
+  # Path to PRM checkpoint (contains regression head weights)
+  checkpoint_path: ???
+  
+  # Path to backbone model (same as actor model)
+  backbone_path: ${actor_rollout_ref.model.path}
+  
+  # Layer to extract latent states from (layer 15 of the actor)
+  extract_layer: 15
+  
+  # Maximum sequence length for PRM input
+  max_length: 256
+
+# Micro batch size settings
+micro_batch_size: null
+micro_batch_size_per_gpu: 8
+
+# Maximum sequence length
+max_length: null
+
+# Dynamic batch size settings
+use_dynamic_bsz: False
+forward_max_token_len_per_gpu: 16384
+
+# Reward manager (not used, PRM computes rewards directly)
+reward_manager: naive
+
+# Async reward computation
+launch_reward_fn_async: False
+
+# Sandbox fusion config
+sandbox_fusion:
+  url: null
+  max_concurrent: 64
+  memory_limit_mb: 1024
+
+# Profiler config
+profiler:
+  _target_: verl.utils.profiler.ProfilerConfig
+  tool: ${oc.select:global_profiler.tool,null}
+  enable: False
+  all_ranks: False
+  ranks: []
+  save_path: ${oc.select:global_profiler.save_path,null}
+  tool_config: ${oc.select:actor_rollout_ref.actor.profiler.tool_config,null}
+
+# NCCL timeout
+nccl_timeout: 600
